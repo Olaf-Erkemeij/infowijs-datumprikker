@@ -150,12 +150,13 @@ class MainVerticle : AbstractVerticle() {
     }
 
   private fun dbConnect(): Pool {
+    // Modify to grab the connection details from the environment
     val connectOptions = PgConnectOptions().apply {
-      port = 5432
-      host = "localhost"
-      database = "mydb"
-      user = "myuser"
-      password = "mypassword"
+      port = System.getenv("DB_PORT").toInt()
+      host = System.getenv("DB_HOST")
+      database = System.getenv("DB_NAME")
+      user = System.getenv("DB_USER")
+      password = System.getenv("DB_PASS")
     }
 
     val poolOptions = PoolOptions().apply {

@@ -2,3 +2,6 @@ datumprikker2
 target
 out
 build
+.vscode
+.idea
+.env
