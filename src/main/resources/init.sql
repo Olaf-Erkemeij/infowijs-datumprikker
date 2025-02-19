@@ -15,6 +15,6 @@ CREATE TABLE IF NOT EXISTS poll_options (
 CREATE TABLE IF NOT EXISTS bookings (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     poll_id uuid REFERENCES polls(id),
-    poll_option_id uuid REFERENCES poll_options(id),
+    poll_option_id uuid UNIQUE REFERENCES poll_options(id),
     booked_by VARCHAR(100) NOT NULL
 );

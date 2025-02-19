@@ -1,6 +1,8 @@
 package com.hoy.datumprikker
 
 import com.hoy.datumprikker.model.*
+import com.hoy.datumprikker.redis.RedisClient
+import com.hoy.datumprikker.exceptions.ConflictException
 
 import java.util.UUID
 import java.time.OffsetDateTime
@@ -14,6 +16,8 @@ import io.vertx.core.http.HttpServerOptions;
 import io.vertx.core.json.Json
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.redis.client.Redis
+import io.vertx.redis.client.RedisOptions
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.openapi.RouterBuilder;
 import io.vertx.ext.web.handler.ResponseContentTypeHandler
@@ -24,12 +28,16 @@ import io.vertx.core.json.jackson.DatabindCodec
 import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
+import com.fasterxml.jackson.module.kotlin.KotlinModule
+import io.vertx.core.Future
 
 import io.vertx.pgclient.PgConnectOptions
 import io.vertx.sqlclient.Pool
 import io.vertx.sqlclient.*
 
 class MainVerticle : AbstractVerticle() {
+  private lateinit var redis: RedisClient
+
   companion object {
     init {
         val objectMapper = DatabindCodec.mapper()
@@ -37,25 +45,27 @@ class MainVerticle : AbstractVerticle() {
         objectMapper.disable(SerializationFeature.WRITE_DATE_TIMESTAMPS_AS_NANOSECONDS)
         objectMapper.disable(DeserializationFeature.READ_DATE_TIMESTAMPS_AS_NANOSECONDS)
         val module = JavaTimeModule()
+        val kotlinModule = KotlinModule.Builder().build()
         objectMapper.registerModule(module)
+        objectMapper.registerModule(kotlinModule)
     }
   }
 
   override fun start(startPromise: Promise<Void>) {
+    redis = RedisClient(vertx)
     val pool = dbConnect()
 
-    createRouter(pool)
+    createRouter(pool, redis)
       .compose { startServer(it) }
       .onSuccess { startPromise.complete() }
       .onFailure { startPromise.fail(it) }
   }
 
-  private fun createRouter(pool: Pool) = RouterBuilder.create(vertx, "datumprikker.yaml")
+  private fun createRouter(pool: Pool, redis: RedisClient) = RouterBuilder.create(vertx, "datumprikker.yaml")
       .map { routerBuilder ->
         routerBuilder.operation("listPolls").handler { rc ->
-          listPolls(pool)
+          listPolls(pool, redis)
             .onSuccess { polls ->
-              println("Polls: $polls")
               rc.response()
                 .setStatusCode(200)
                 .end(Json.encodeToBuffer(polls))
@@ -64,7 +74,7 @@ class MainVerticle : AbstractVerticle() {
         }
 
         routerBuilder.operation("createPolls").handler { rc ->
-          val poll = rc.body().asJsonObject().mapTo(Poll::class.java)
+          val poll = rc.body().asJsonObject().mapTo(PollCreateRequest::class.java)
           savePoll(poll, pool)
             .onSuccess { id ->
               rc.response()
@@ -93,12 +103,14 @@ class MainVerticle : AbstractVerticle() {
           val booking = rc.body().asJsonObject().mapTo(PollBooking::class.java)
           bookPollOption(pollId, booking, pool)
             .onSuccess { bookingId: UUID ->
-              println("Booking saved with id: $bookingId")
               rc.response()
                 .setStatusCode(201)
                 .end(JsonObject().put("bookingId", bookingId).encode())
             }
-            .onFailure { rc.fail(it) }
+            .onFailure { e: Throwable ->
+              if (e is ConflictException) rc.response().setStatusCode(409).end()
+              else rc.fail(e)
+            }
         }
 
         routerBuilder.operation("resultPolls").handler { rc ->
@@ -113,7 +125,17 @@ class MainVerticle : AbstractVerticle() {
             .onFailure { rc.fail(it) }
         }
 
-        routerBuilder.createRouter()
+        val router = routerBuilder.createRouter()
+
+        router.route().failureHandler { ctx ->
+          val statusCode = ctx.statusCode()
+          val message = ctx.failure().message
+          ctx.response()
+            .setStatusCode(statusCode)
+            .end(JsonObject().put("error", message).encode())
+        }
+
+        router
       }
 
   private fun startServer(router: Router) = vertx.createHttpServer()
@@ -143,11 +165,40 @@ class MainVerticle : AbstractVerticle() {
     return Pool.pool(vertx, connectOptions, poolOptions)
   }
 
-  fun listPolls(pool: Pool) = pool.query("SELECT * FROM polls")
-    .execute()
-    .map { it.map { row -> row.toPoll() } }
+  fun listPolls(pool: Pool, redis: RedisClient) = pool.preparedQuery(
+    """
+    SELECT 
+      p.id AS poll_id, 
+      p.title, 
+      p.description, 
+      p.created_by, 
+      po.id AS option_id, 
+      po.begin_date_time, 
+      po.end_date_time 
+    FROM polls p 
+    JOIN poll_options po ON p.id = po.poll_id
+    """.trimIndent()
+  ).execute()
+  .map { it.groupBy { row -> row.getUUID("poll_id") }
+    .map { (pollId, rows) ->
+      val pollRow = rows.first()
+      Poll(
+        id = pollId,
+        title = pollRow.getString("title"),
+        description = pollRow.getString("description"),
+        createdBy = pollRow.getString("created_by"),
+        options = rows.map { row ->
+          PollOption(
+            optionId = row.getUUID("option_id"),
+            beginDateTime = row.getOffsetDateTime("begin_date_time"),
+            endDateTime = row.getOffsetDateTime("end_date_time")
+          )
+        }.toTypedArray()
+      )
+    }
+  }
 
-  fun savePoll(poll: Poll, pool: Pool) = pool.withTransaction { conn ->
+  fun savePoll(poll: PollCreateRequest, pool: Pool) = pool.withTransaction { conn ->
     conn.preparedQuery(
       """
       INSERT INTO polls (title, description, created_by)
@@ -178,8 +229,11 @@ class MainVerticle : AbstractVerticle() {
       po.begin_date_time, 
       po.end_date_time 
     FROM polls p 
-    JOIN poll_options po ON p.id = po.poll_id 
+    JOIN poll_options po ON p.id = po.poll_id
+    LEFT JOIN bookings b ON po.id = b.poll_option_id
     WHERE p.id = $1
+    GROUP BY p.id, po.id
+    HAVING COUNT(b.id) = 0
     """.trimIndent()
   ).execute(Tuple.of(pollId))
   .map { it.groupBy { row -> row.getUUID("poll_id") }
@@ -205,10 +259,18 @@ class MainVerticle : AbstractVerticle() {
     """
     INSERT INTO bookings (poll_id, poll_option_id, booked_by) 
     VALUES ($1, $2, $3) 
+    ON CONFLICT (poll_option_id) DO NOTHING
     RETURNING id
     """.trimIndent()
   ).execute(Tuple.of(pollId, data.optionId, data.name))
-  .map { it.first().getUUID("id") }
+  .compose { res ->
+    // Query can fail if the option is already booked
+    if (res.size() == 0) {
+      Future.failedFuture(ConflictException("Option already booked"))
+    } else {
+      Future.succeededFuture(res.first().getUUID("id"))
+    }
+  }
 
   fun getBookings(pollId: UUID, client: Pool) = client.preparedQuery(
     """

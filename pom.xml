@@ -116,6 +116,11 @@
       <version>2.1</version>
       <optional>true</optional>
     </dependency>
+    <dependency>
+      <groupId>io.vertx</groupId>
+      <artifactId>vertx-redis-client</artifactId>
+      <version>4.5.13</version>
+    </dependency>
   </dependencies>
 
   <build>

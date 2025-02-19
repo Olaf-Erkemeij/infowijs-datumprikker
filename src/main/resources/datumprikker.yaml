@@ -88,7 +88,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PollBookRequest'
       responses:
-        '200':
+        '201':
           description: Booking recorded successfully.
           content:
             application/json:
@@ -98,7 +98,9 @@ paths:
                   message:
                     type: string
         '400':
-          description: Invalid vote request.
+          description: Invalid booking request.
+        '409':
+          description: Conflict with existing booking.
   /polls/{pollId}/results:
     get:
       summary: Retrieve poll results
@@ -194,8 +196,11 @@ components:
           items:
             type: object
             properties:
-              optionId:
+              name:
                 type: string
-                format: uuid
-              votes:
-                type: integer
+              beginDateTime:
+                type: string
+                format: date-time
+              endDateTime:
+                type: string
+                format: date-time

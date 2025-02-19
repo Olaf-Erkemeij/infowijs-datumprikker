@@ -19,6 +19,23 @@ data class Poll(
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
+data class PollCreateRequest(
+    val title: String,
+    val description: String? = null,
+    val createdBy: String,
+    val options: Array<PollOptionCreate>
+)
+
+    
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonIgnoreProperties(ignoreUnknown = true)
+data class PollOptionCreate(
+    val beginDateTime: OffsetDateTime,
+    val endDateTime: OffsetDateTime
+)
+
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonIgnoreProperties(ignoreUnknown = true)
 data class PollOption(
     val optionId: UUID? = null,
     val pollId: UUID? = null,
@@ -31,7 +48,8 @@ data class PollOption(
 data class PollBooking(
     val pollId: UUID? = null,
     val optionId: UUID? = null,
-    val name: String? = null
+    val name: String? = null,
+    val email: String? = null
 )
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
