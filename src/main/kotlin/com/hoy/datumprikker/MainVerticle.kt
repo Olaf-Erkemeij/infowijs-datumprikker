@@ -9,13 +9,18 @@ import java.time.OffsetDateTime
 
 import io.vertx.core.AbstractVerticle
 import io.vertx.core.Promise
-import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpHeaders;
-import io.vertx.core.http.HttpServer;
-import io.vertx.core.http.HttpServerOptions;
+import io.vertx.core.Vertx
+import io.vertx.core.http.HttpMethod
+import io.vertx.core.http.HttpHeaders
+import io.vertx.core.http.HttpServer
+import io.vertx.core.http.HttpServerOptions
 import io.vertx.core.json.Json
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
+import io.vertx.ext.web.RoutingContext
+import io.vertx.ext.web.handler.StaticHandler
+import io.vertx.redis.client.Request
+import io.vertx.redis.client.Command
 import io.vertx.redis.client.Redis
 import io.vertx.redis.client.RedisOptions
 import io.vertx.ext.web.Router;
@@ -29,6 +34,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.KotlinModule
+import io.vertx.ext.web.handler.CorsHandler
 import io.vertx.core.Future
 
 import io.vertx.pgclient.PgConnectOptions
@@ -64,18 +70,39 @@ class MainVerticle : AbstractVerticle() {
   private fun createRouter(pool: Pool, redis: RedisClient) = RouterBuilder.create(vertx, "datumprikker.yaml")
       .map { routerBuilder ->
         routerBuilder.operation("listPolls").handler { rc ->
-          listPolls(pool, redis)
-            .onSuccess { polls ->
-              rc.response()
-                .setStatusCode(200)
-                .end(Json.encodeToBuffer(polls))
+          val cacheKey = "all_polls"
+          redis.getClient().send(Request.cmd(Command.GET).arg(cacheKey)) { res ->
+            if (res.succeeded()) {
+              val cached = res.result()
+              if (cached != null) {
+                rc.response()
+                  .setStatusCode(200)
+                  .end(cached.toString())
+              } else {
+                listPolls(pool, redis)
+                  .onSuccess { polls ->
+                    val json = Json.encode(polls)
+                    redis.getClient().send(Request.cmd(Command.SET).arg(cacheKey).arg(json)) { res ->
+                      if (res.succeeded()) {
+                        rc.response()
+                          .setStatusCode(200)
+                          .end(json)
+                      } else {
+                        rc.fail(res.cause())
+                      }
+                    }
+                  }
+                  .onFailure { rc.fail(it) }
+              }
+            } else {
+              rc.fail(res.cause())
             }
-            .onFailure { rc.fail(it) }
+          }
         }
 
         routerBuilder.operation("createPolls").handler { rc ->
           val poll = rc.body().asJsonObject().mapTo(PollCreateRequest::class.java)
-          savePoll(poll, pool)
+          savePoll(poll, pool, redis)
             .onSuccess { id ->
               rc.response()
                 .setStatusCode(201)
@@ -127,6 +154,13 @@ class MainVerticle : AbstractVerticle() {
 
         val router = routerBuilder.createRouter()
 
+        router.get("/docs/*").handler(createSwaggerHandler())
+        router.route("/datumprikker.yaml").handler { rc ->
+          rc.response()
+            .putHeader(HttpHeaders.CONTENT_TYPE, "application/yaml")
+            .sendFile("datumprikker.yaml")
+        }
+
         router.route().failureHandler { ctx ->
           val statusCode = ctx.statusCode()
           val message = ctx.failure().message
@@ -166,6 +200,12 @@ class MainVerticle : AbstractVerticle() {
     return Pool.pool(vertx, connectOptions, poolOptions)
   }
 
+  private fun createSwaggerHandler() = 
+    StaticHandler
+      .create("webroot/swagger-ui")
+      .setCachingEnabled(false)
+      .setIndexPage("index.html")
+
   fun listPolls(pool: Pool, redis: RedisClient) = pool.preparedQuery(
     """
     SELECT 
@@ -199,7 +239,7 @@ class MainVerticle : AbstractVerticle() {
     }
   }
 
-  fun savePoll(poll: PollCreateRequest, pool: Pool) = pool.withTransaction { conn ->
+  fun savePoll(poll: PollCreateRequest, pool: Pool, redis: RedisClient) = pool.withTransaction { conn ->
     conn.preparedQuery(
       """
       INSERT INTO polls (title, description, created_by)
@@ -217,6 +257,13 @@ class MainVerticle : AbstractVerticle() {
       ).executeBatch(poll.options.map { Tuple.of(pollId, it.beginDateTime, it.endDateTime) })
       .map { pollId }
     }
+  }.compose { pollId ->
+    redis.getClient().connect()
+      .compose { redis ->
+        redis.send(Request.cmd(Command.DEL).arg("all_polls"))
+          .onComplete { redis.close() }
+      }
+      .map { pollId }
   }
 
   fun getPoll(pollId: UUID, client: Pool) = client.preparedQuery(
@@ -258,14 +305,13 @@ class MainVerticle : AbstractVerticle() {
 
   fun bookPollOption(pollId: UUID, data: PollBooking, client: Pool) = client.preparedQuery(
     """
-    INSERT INTO bookings (poll_id, poll_option_id, booked_by) 
-    VALUES ($1, $2, $3) 
+    INSERT INTO bookings (poll_id, poll_option_id, booked_by, email)
+    VALUES ($1, $2, $3, $4)
     ON CONFLICT (poll_option_id) DO NOTHING
     RETURNING id
     """.trimIndent()
-  ).execute(Tuple.of(pollId, data.optionId, data.name))
+  ).execute(Tuple.of(pollId, data.optionId, data.name, data.email))
   .compose { res ->
-    // Query can fail if the option is already booked
     if (res.size() == 0) {
       Future.failedFuture(ConflictException("Option already booked"))
     } else {

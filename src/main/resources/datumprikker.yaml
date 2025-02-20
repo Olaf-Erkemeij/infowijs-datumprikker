@@ -1,11 +1,11 @@
 openapi: 3.0.1
 info:
   title: Datumprikker API
-  description: API for scheduling polls similar to Datumprikker.
+  description: API for scheduling Datumprikker polls.
   version: "1.0.0"
 servers:
   - url: http://localhost:8080
-    description: Local server
+    description: Local development server
 paths:
   /polls:
     post:
@@ -45,7 +45,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Poll'
+                  $ref: '#/components/schemas/PollList'
   /polls/{pollId}:
     get:
       summary: Get poll details including options.
@@ -141,6 +141,34 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PollOption'
+    PollList:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        createdBy:
+          type: string
+        description:
+          type: string
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/PollOptionList'
+    PollOptionList:
+      type: object
+      properties:
+        optionId:
+          type: string
+          format: uuid
+        beginDateTime:
+          type: string
+          format: date-time
+        endDateTime:
+          type: string
+          format: date-time
     PollOption:
       type: object
       required:
@@ -176,6 +204,7 @@ components:
       required:
         - optionId
         - name
+        - email
       properties:
         optionId:
           type: string
