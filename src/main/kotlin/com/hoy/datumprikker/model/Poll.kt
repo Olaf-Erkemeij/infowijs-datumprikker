@@ -6,7 +6,6 @@ import io.vertx.sqlclient.Row
 import java.time.OffsetDateTime
 import java.util.UUID
 
-// Model classes first
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class Poll(
@@ -60,7 +59,6 @@ data class PollResult(
     val endDateTime: OffsetDateTime = beginDateTime.plusHours(1),
 )
 
-// Extension functions after model classes
 fun Row.toPoll() = Poll(
     id = getUUID("id"),
     title = getString("title"),
@@ -84,5 +82,6 @@ fun Row.toPollResult() = PollResult(
 fun Row.toPollBooking() = PollBooking(
     pollId = getUUID("poll_id"),
     optionId = getUUID("poll_option_id"),
-    name = getString("booked_by")
+    name = getString("booked_by"),
+    email = getString("email")
 )

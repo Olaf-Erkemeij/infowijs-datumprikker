@@ -14,13 +14,12 @@ To locally run the application, you need to have Docker installed. You can downl
 docker compose up -d --build
 ```
 This will build and start all development Docker containers. The following containers will be started:
-<!-- Create a table with container - port - description -->
-| Container name | Port | Description |
-| --- | --- | --- |
-| datumprikker-api | 8080 | The API for the Datumprikker application |
-| datumprikker-db | 5432 | The PostgreSQL database for the Datumprikker application |
-| redis-cache | 6379 | The Redis cache for the Datumprikker application |
-| adminer-db | 8081 | The Adminer interface for the PostgreSQL database |
+| Container name   | Port | Description                                              |
+|------------------|------|----------------------------------------------------------|
+| datumprikker-api | 8080 | The API for the Datumprikker application                 |
+| datumprikker-db  | 5432 | The PostgreSQL database for the Datumprikker application |
+| redis-cache      | 6379 | The Redis cache for the Datumprikker application         |
+| adminer-db       | 8081 | The Adminer interface for the PostgreSQL database        |
 
 After running the command, the application will be available at `http://localhost:8080`. The Adminer interface for the PostgreSQL database will be available at `http://localhost:8081`. You can login to the Adminer interface with the database credentials found in the `.env` file.
 
