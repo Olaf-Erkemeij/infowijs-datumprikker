@@ -48,7 +48,7 @@ paths:
                   $ref: '#/components/schemas/PollList'
   /polls/{pollId}:
     get:
-      summary: Get poll details including options.
+      summary: Get poll details including options that are still open.
       operationId: getPoll
       tags:
         - Polls
@@ -95,8 +95,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  message:
+                  bookingId:
                     type: string
+                    format: uuid
         '400':
           description: Invalid booking request.
         '409':
