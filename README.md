@@ -9,7 +9,11 @@ This application acts as a datumprikker in which users can:
 ## Installation
 
 ## Installation
-To locally run the application, you need to have Docker installed. You can download Docker [here](https://docs.docker.com/get-docker/). After installing Docker, you can clone the repistory and run the following command in the root directory of the project:
+To locally run the application, you need to have Docker installed. You can download Docker [here](https://docs.docker.com/get-docker/). After installing Docker, you can clone the repository and run the following command in the root directory of the project:
+```bash
+cp .env.example .env
+```
+This will create a `.env` file in the root directory of the project. You can change the values in this file to your liking. After setting up the `.env` file, you can run the following command in the root directory of the project:
 ```bash
 docker compose up -d --build
 ```
